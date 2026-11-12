@@ -11,7 +11,8 @@ const char *opcoesMenu[4] = {"1. Coleta", "2. Calibracao", "3. Transmissao",
 
 int selectedMenu = 1; // Opcao selecionada (1 a 4)
 int lastClkState = HIGH;
-int lastButtonState = HIGH;
+int buttonState = HIGH;       // Estado estavel (debounced) do botao
+int lastButtonReading = HIGH; // Ultima leitura bruta do pino do botao
 unsigned long lastDebounceTime = 0;
 unsigned long fz_lcd = 0;
 
@@ -22,7 +23,8 @@ void initHMI() {
           INPUT_PULLUP); // Botao do encoder (LOW quando pressionado)
 
   lastClkState = digitalRead(PIN_ENC_CLK);
-  lastButtonState = digitalRead(PIN_ENC_SW);
+  buttonState = digitalRead(PIN_ENC_SW);
+  lastButtonReading = buttonState;
 
   Wire.begin(PIN_LCD_SDA, PIN_LCD_SCL);
   lcd.init();
@@ -89,20 +91,28 @@ void updateMenuNavigation() {
 }
 
 // Substitui o click() antigo: retorna true quando o botao do encoder e
-// pressionado
+// pressionado (com debounce completo tanto na descida quanto na subida)
 bool checkButtonClick() {
-  int currentButtonState = digitalRead(PIN_ENC_SW);
+  int reading = digitalRead(PIN_ENC_SW);
   bool clicou = false;
 
-  // Detecta borda de descida (botao com pull-up vai para LOW ao apertar)
-  if (lastButtonState == HIGH && currentButtonState == LOW) {
-    if (millis() - lastDebounceTime > 50) {
-      clicou = true;
-      lastDebounceTime = millis();
+  // Reinicia o temporizador sempre que o sinal bruto oscilar (ruido ou bounce)
+  if (reading != lastButtonReading) {
+    lastDebounceTime = millis();
+  }
+  lastButtonReading = reading;
+
+  // So atualiza o estado logico do botao se o nivel permanecer estavel por > 50ms
+  if ((millis() - lastDebounceTime) > 50) {
+    if (reading != buttonState) {
+      buttonState = reading;
+      // Registra o clique apenas na transicao estavel para pressionado (LOW)
+      if (buttonState == LOW) {
+        clicou = true;
+      }
     }
   }
 
-  lastButtonState = currentButtonState;
   return clicou;
 }
 
@@ -128,6 +138,18 @@ void updateCollectionScreen(long empuxo) {
     lcd.setCursor(8, 2);
     lcd.print(empuxo);
   }
+}
+
+void showSDErrorScreen() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("ERRO NO CARTAO SD!");
+  lcd.setCursor(0, 1);
+  lcd.print("Falha ao gravar.");
+  lcd.setCursor(0, 2);
+  lcd.print("Verifique o cartao");
+  lcd.setCursor(0, 3);
+  lcd.print("e tente novamente.");
 }
 
 void showCalibrationScreen() {
@@ -156,7 +178,7 @@ void updateCalibrationScreen(int segundosRestantes, long leituraAtual) {
   }
 }
 
-void showCalibrationDone(long media) {
+void showCalibrationDone(long media, bool salvoNoSD) {
   lcd.clear();
   lcd.setCursor(0, 0);
   lcd.print("CALIBRACAO CONCLUIDA");
@@ -164,7 +186,11 @@ void showCalibrationDone(long media) {
   lcd.print("Media: ");
   lcd.print(media);
   lcd.setCursor(0, 3);
-  lcd.print("Salvo no Cartao SD!");
+  if (salvoNoSD) {
+    lcd.print("Salvo no Cartao SD!");
+  } else {
+    lcd.print("ERRO ao salvar SD!");
+  }
 }
 
 void showTransmissionScreen() {

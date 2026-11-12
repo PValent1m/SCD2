@@ -8,9 +8,13 @@
 SemaphoreHandle_t sdMutex;
 Preferences preferences;
 String pathSave;
+File sessionFile;
+unsigned long ultimoFlushSD = 0;
+bool sdMontado = false;
 
 void initStorage() {
-  if (!SD.begin(PIN_SD_CS)) {
+  sdMontado = SD.begin(PIN_SD_CS);
+  if (!sdMontado) {
     Serial.println("Falha ao inicializar o cartao SD.");
   }
 
@@ -18,13 +22,69 @@ void initStorage() {
   pathSave = "/Coleta_" + String(preferences.getInt("cont", 0)) + ".txt";
 }
 
-// Incrementa o contador na memoria e gera o nome /Coleta_N.txt (igual ao SCD 1)
+// Garante que o cartao SD esta montado (tenta inicializar novamente se necessario)
+static bool garantirSDMontado() {
+  if (!sdMontado) {
+    sdMontado = SD.begin(PIN_SD_CS);
+  }
+  return sdMontado;
+}
+
+// Incrementa o contador na memoria, abre o arquivo /Coleta_N.txt e mantem aberto durante a sessao.
+// Retorna "" se houver falha no cartao SD.
 String startNewSession() {
-  int contador = preferences.getInt("cont", 0) + 1;
-  preferences.putInt("cont", contador);
-  pathSave = "/Coleta_" + String(contador) + ".txt";
+  if (xSemaphoreTake(sdMutex, (TickType_t)100) != pdTRUE) {
+    Serial.println("Falha ao obter mutex do SD para iniciar sessao.");
+    return "";
+  }
+
+  if (!garantirSDMontado()) {
+    xSemaphoreGive(sdMutex);
+    Serial.println("Cartao SD ausente ou com falha ao iniciar coleta.");
+    return "";
+  }
+
+  if (sessionFile) {
+    sessionFile.close();
+  }
+
+  int proximoContador = preferences.getInt("cont", 0) + 1;
+  String novoCaminho = "/Coleta_" + String(proximoContador) + ".txt";
+
+  sessionFile = SD.open(novoCaminho, FILE_APPEND);
+  if (!sessionFile) {
+    // Tenta remontar o SD caso o cartao tenha sido removido e reinserido
+    SD.end();
+    sdMontado = SD.begin(PIN_SD_CS);
+    if (sdMontado) {
+      sessionFile = SD.open(novoCaminho, FILE_APPEND);
+    }
+  }
+
+  if (!sessionFile) {
+    xSemaphoreGive(sdMutex);
+    Serial.println("Falha ao criar arquivo de coleta no SD!");
+    return "";
+  }
+
+  preferences.putInt("cont", proximoContador);
+  pathSave = novoCaminho;
+  ultimoFlushSD = millis();
+  xSemaphoreGive(sdMutex);
+
   Serial.println("Salvando em: " + pathSave);
   return pathSave;
+}
+
+// Fecha o arquivo de coleta ao encerrar a sessao, garantindo a gravacao da tabela FAT
+void stopSession() {
+  if (xSemaphoreTake(sdMutex, (TickType_t)100) == pdTRUE) {
+    if (sessionFile) {
+      sessionFile.flush();
+      sessionFile.close();
+    }
+    xSemaphoreGive(sdMutex);
+  }
 }
 
 // Guarda a taxa de amostragem escolhida para ela continuar valendo depois de desligar
@@ -37,24 +97,27 @@ int loadSampleRate() {
   return preferences.getInt("taxa", TAXA_PADRAO);
 }
 
-// Adapta o save() original do SCD 1 para gravar todos os sensores do SCD 2
+// Grava todos os sensores do SCD 2 no arquivo ja aberto (com flush periodico no SD)
 void saveData(DadosSensores &dados) {
   if (xSemaphoreTake(sdMutex, (TickType_t)10) == pdTRUE) {
-    File fileToSave = SD.open(pathSave, FILE_APPEND);
-
-    if (fileToSave) {
+    if (sessionFile) {
       char dataBuffer[100];
-      sprintf(dataBuffer, "%lu %ld %.2f %.2f %.2f %.2f",
-              dados.tempoMs,
-              dados.celulaCarga,
-              dados.ntc1,
-              dados.ntc2,
-              dados.ntc3,
-              dados.termopar);
-      fileToSave.println(dataBuffer);
-      fileToSave.close();
+      snprintf(dataBuffer, sizeof(dataBuffer), "%lu %ld %.2f %.2f %.2f %.2f",
+               dados.tempoMs,
+               dados.celulaCarga,
+               dados.ntc1,
+               dados.ntc2,
+               dados.ntc3,
+               dados.termopar);
+      sessionFile.println(dataBuffer);
+
+      // Faz flush periodico a cada 500ms para proteger os dados sem travar cada amostra
+      if (millis() - ultimoFlushSD >= 500) {
+        ultimoFlushSD = millis();
+        sessionFile.flush();
+      }
     } else {
-      Serial.println("Falha ao abrir arquivo para salvar!");
+      Serial.println("Falha: arquivo de sessao nao esta aberto!");
     }
     xSemaphoreGive(sdMutex);
   } else {
@@ -85,29 +148,47 @@ void runCalibrationRoutine() {
     media = (long)(somaLeituras / quantidadeAmostras);
   }
 
-  // Gera o arquivo /Calibracao_N.txt para salvar o valor medio
+  bool salvoNoSD = false;
   int contCal = preferences.getInt("cal_cont", 0) + 1;
-  preferences.putInt("cal_cont", contCal);
   String pathCal = "/Calibracao_" + String(contCal) + ".txt";
 
-  if (xSemaphoreTake(sdMutex, (TickType_t)10) == pdTRUE) {
-    File calFile = SD.open(pathCal, FILE_APPEND);
-    if (calFile) {
-      calFile.print("Media da Celula de Carga (10s): ");
-      calFile.println(media);
-      calFile.print("Amostras lidas: ");
-      calFile.println(quantidadeAmostras);
-      calFile.print("Taxa de amostragem: ");
-      calFile.print(getSPSValue(getSampleRateIndex()));
-      calFile.println(" SPS");
-      calFile.close();
-      Serial.println("Calibracao salva em: " + pathCal);
-    } else {
+  if (xSemaphoreTake(sdMutex, (TickType_t)100) == pdTRUE) {
+    if (garantirSDMontado()) {
+      File calFile = SD.open(pathCal, FILE_APPEND);
+      if (!calFile) {
+        SD.end();
+        sdMontado = SD.begin(PIN_SD_CS);
+        if (sdMontado) {
+          calFile = SD.open(pathCal, FILE_APPEND);
+        }
+      }
+
+      if (calFile) {
+        size_t bytesEscritos = 0;
+        bytesEscritos += calFile.print("Media da Celula de Carga (10s): ");
+        bytesEscritos += calFile.println(media);
+        bytesEscritos += calFile.print("Amostras lidas: ");
+        bytesEscritos += calFile.println(quantidadeAmostras);
+        bytesEscritos += calFile.print("Taxa de amostragem: ");
+        bytesEscritos += calFile.print(getSPSValue(getSampleRateIndex()));
+        bytesEscritos += calFile.println(" SPS");
+        calFile.flush();
+        calFile.close();
+
+        if (bytesEscritos > 0) {
+          salvoNoSD = true;
+          preferences.putInt("cal_cont", contCal);
+          Serial.println("Calibracao salva em: " + pathCal);
+        }
+      }
+    }
+
+    if (!salvoNoSD) {
       Serial.println("Falha ao salvar arquivo de calibracao!");
     }
     xSemaphoreGive(sdMutex);
   }
 
-  showCalibrationDone(media);
+  showCalibrationDone(media, salvoNoSD);
   delay(2000); // Mostra o resultado por 2 segundos antes de voltar ao menu
 }

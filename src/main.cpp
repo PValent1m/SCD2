@@ -16,9 +16,17 @@ int taxaMostrada = -1;   // Ultima taxa mostrada na tela de transmissao
 
 void startCollection() {
   if (!coleta) {
+    String caminho = startNewSession();
+    if (caminho == "") {
+      Serial.println("Coleta ABORTADA: falha no cartao SD.");
+      showSDErrorScreen();
+      delay(2000);
+      printMenu();
+      return;
+    }
+
     coleta = true;
     Serial.println("Coleta INICIADA.");
-    String caminho = startNewSession();
     showCollectionScreen(caminho);
   }
 }
@@ -26,6 +34,7 @@ void startCollection() {
 void stopCollection() {
   if (coleta) {
     coleta = false;
+    stopSession();
     Serial.println("Coleta PARADA.");
     printMenu();
   }

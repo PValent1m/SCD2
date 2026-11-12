@@ -1,23 +1,23 @@
 #include "web_server.h"
-#include "web_page.h"
 #include "config.h"
+#include "hmi.h"
 #include "sensors.h"
 #include "storage.h"
-#include "hmi.h"
+#include "web_page.h"
 
-#include <WiFi.h>
-#include <ESPAsyncWebServer.h>
-#include <AsyncTCP.h>
-#include <SD.h>
 #include "FS.h"
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
 #include <LittleFS.h>
+#include <SD.h>
+#include <WiFi.h>
 
 // Handle para a tarefa do Core 0 (igual ao SCD 1)
 TaskHandle_t webServerTaskHandle = NULL;
 
 // Variaveis para o Web Server (iguais ao SCD 1)
-const char* ssid = WIFI_SSID;
-const char* password = WIFI_PASS;
+const char *ssid = WIFI_SSID;
+const char *password = WIFI_PASS;
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 
@@ -27,10 +27,15 @@ void enviarTaxaAtual() {
 }
 
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
-  AwsFrameInfo *info = (AwsFrameInfo*)arg;
-  if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
-    data[len] = 0;
-    char* msg = (char*)data;
+  AwsFrameInfo *info = (AwsFrameInfo *)arg;
+  if (info->final && info->index == 0 && info->len == len &&
+      info->opcode == WS_TEXT) {
+    // Copia para um buffer local com espaco garantido para o terminador nulo
+    // '\0'
+    char msg[128];
+    size_t copyLen = (len < sizeof(msg) - 1) ? len : (sizeof(msg) - 1);
+    memcpy(msg, data, copyLen);
+    msg[copyLen] = '\0';
 
     // Pagina pediu a taxa atual (enviado quando a pagina conecta)
     if (strcmp(msg, "GET_SPS") == 0) {
@@ -51,20 +56,20 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
     }
 
     // Procura por "Delete/SD:" independentemente do caso
-    const char* sd_key = "Delete/SD:";
-    char* substring = strcasestr(msg, sd_key);
+    const char *sd_key = "Delete/SD:";
+    char *substring = strcasestr(msg, sd_key);
     if (substring != NULL) {
-      char* content = substring + strlen(sd_key);
+      char *content = substring + strlen(sd_key);
       Serial.println("Comando para deletar arquivo SD recebido.");
       delete_file(true, content);
       return;
     }
 
     // Procura por "Delete/LittleFS:"
-    const char* lfs_key = "Delete/LittleFS:";
+    const char *lfs_key = "Delete/LittleFS:";
     substring = strcasestr(msg, lfs_key);
     if (substring != NULL) {
-      char* content = substring + strlen(lfs_key);
+      char *content = substring + strlen(lfs_key);
       Serial.println("Comando para deletar arquivo LittleFS recebido.");
       delete_file(false, content);
       return;
@@ -79,27 +84,30 @@ void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
   }
 }
 
-void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type,
-             void *arg, uint8_t *data, size_t len) {
+void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
+             AwsEventType type, void *arg, uint8_t *data, size_t len) {
   switch (type) {
-    case WS_EVT_CONNECT:
-      Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
-      break;
-    case WS_EVT_DISCONNECT:
-      Serial.printf("WebSocket client #%u disconnected\n", client->id());
-      break;
-    case WS_EVT_DATA:
-      handleWebSocketMessage(arg, data, len);
-      break;
-    case WS_EVT_PONG:
-    case WS_EVT_ERROR:
-      break;
+  case WS_EVT_CONNECT:
+    Serial.printf("WebSocket client #%u connected from %s\n", client->id(),
+                  client->remoteIP().toString().c_str());
+    break;
+  case WS_EVT_DISCONNECT:
+    Serial.printf("WebSocket client #%u disconnected\n", client->id());
+    break;
+  case WS_EVT_DATA:
+    handleWebSocketMessage(arg, data, len);
+    break;
+  case WS_EVT_PONG:
+  case WS_EVT_ERROR:
+    break;
   }
 }
 
 void dir(bool op) {
   if (op == false) {
-    ws.textAll("{\"name\":\"Listagem desativada.\",\"size\":\"\",\"type\":\"Info\",\"loc\":\"LittleFS\"}");
+    ws.textAll(
+        "{\"name\":\"Listagem "
+        "desativada.\",\"size\":\"\",\"type\":\"Info\",\"loc\":\"LittleFS\"}");
     return;
   }
 
@@ -108,7 +116,8 @@ void dir(bool op) {
     root = SD.open("/");
     xSemaphoreGive(sdMutex);
   } else {
-    ws.textAll("{\"name\":\"Falha ao acessar SD\",\"size\":\"\",\"type\":\"Error\",\"loc\":\"sd\"}");
+    ws.textAll("{\"name\":\"Falha ao acessar "
+               "SD\",\"size\":\"\",\"type\":\"Error\",\"loc\":\"sd\"}");
     return;
   }
 
@@ -132,12 +141,18 @@ void dir(bool op) {
     if (xSemaphoreTake(sdMutex, (TickType_t)10) == pdTRUE) {
       String fsize = "";
       int bytes = file.size();
-      if (bytes < 1024) fsize = String(bytes) + " B";
-      else if (bytes < (1024 * 1024)) fsize = String(bytes / 1024.0, 3) + " KB";
-      else fsize = String(bytes / 1024.0 / 1024.0, 3) + " MB";
+      if (bytes < 1024)
+        fsize = String(bytes) + " B";
+      else if (bytes < (1024 * 1024))
+        fsize = String(bytes / 1024.0, 3) + " KB";
+      else
+        fsize = String(bytes / 1024.0 / 1024.0, 3) + " MB";
 
       String location = op ? "sd" : "LittleFS";
-      ws.textAll("{\"name\":\"" + String(file.name()) + "\",\"size\":\"" + fsize + "\",\"type\":\"" + (file.isDirectory() ? "Dir" : "File") + "\",\"loc\":\"" + location + "\"}");
+      ws.textAll("{\"name\":\"" + String(file.name()) + "\",\"size\":\"" +
+                 fsize + "\",\"type\":\"" +
+                 (file.isDirectory() ? "Dir" : "File") + "\",\"loc\":\"" +
+                 location + "\"}");
 
       file.close();
       xSemaphoreGive(sdMutex);
@@ -177,23 +192,24 @@ void webServerTask(void *pvParameters) {
   ws.onEvent(onEvent);
   server.addHandler(&ws);
 
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     if (xSemaphoreTake(sdMutex, (TickType_t)10) == pdTRUE) {
       request->send_P(200, "text/html", index_html);
       xSemaphoreGive(sdMutex);
     } else {
-      request->send(503, "text/plain", "SD Card ocupado, tente novamente mais tarde :p.");
+      request->send(503, "text/plain",
+                    "SD Card ocupado, tente novamente mais tarde :p.");
     }
   });
 
-  server.on("/download", HTTP_GET, [](AsyncWebServerRequest *request){
+  server.on("/download", HTTP_GET, [](AsyncWebServerRequest *request) {
     if (xSemaphoreTake(sdMutex, (TickType_t)10) == pdTRUE) {
       if (request->hasParam("file") && request->hasParam("loc")) {
         String fileName = request->getParam("file")->value();
         String location = request->getParam("loc")->value();
         String path = "/" + fileName;
 
-        FS* filesystem;
+        FS *filesystem;
 
         if (location == "sd") {
           filesystem = &SD;
@@ -206,9 +222,12 @@ void webServerTask(void *pvParameters) {
         }
 
         if (filesystem->exists(path)) {
-          Serial.println("Enviando arquivo para download: " + path + " com o nome: " + fileName);
-          AsyncWebServerResponse *response = request->beginResponse(*filesystem, path, "application/octet-stream");
-          response->addHeader("Content-Disposition", "attachment; filename=" + fileName);
+          Serial.println("Enviando arquivo para download: " + path +
+                         " com o nome: " + fileName);
+          AsyncWebServerResponse *response = request->beginResponse(
+              *filesystem, path, "application/octet-stream");
+          response->addHeader("Content-Disposition",
+                              "attachment; filename=" + fileName);
           request->send(response);
         } else {
           Serial.println("Arquivo nao encontrado: " + path);
@@ -230,23 +249,20 @@ void webServerTask(void *pvParameters) {
   }
 }
 
-void initWebServer() {
-  WiFi.mode(WIFI_OFF);
-}
+void initWebServer() { WiFi.mode(WIFI_OFF); }
 
 void startWebServer() {
   if (webServerTaskHandle == NULL) {
     Serial.println("Ligando a transmissao... Criando tarefa no Core 0.");
     showTransmissionScreen();
 
-    xTaskCreatePinnedToCore(
-      webServerTask,        // Funcao da tarefa
-      "WebServerTask",      // Nome
-      5000,                 // Tamanho da Pilha (Stack Size)
-      NULL,                 // Parametros
-      1,                    // Prioridade
-      &webServerTaskHandle, // Handle da Tarefa
-      0);                   // Fixar no Core 0
+    xTaskCreatePinnedToCore(webServerTask,   // Funcao da tarefa
+                            "WebServerTask", // Nome
+                            5000,            // Tamanho da Pilha (Stack Size)
+                            NULL,            // Parametros
+                            1,               // Prioridade
+                            &webServerTaskHandle, // Handle da Tarefa
+                            0);                   // Fixar no Core 0
   } else {
     Serial.println("Transmissao ja esta ligada.");
   }

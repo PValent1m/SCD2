@@ -17,6 +17,10 @@ int taxaAtual = TAXA_PADRAO;
 const byte muxNTC[3] = {SING_0, SING_1, SING_2};      // NTC 1, 2 e 3 (AIN0, AIN1, AIN2)
 int canalAtual = -1;                                  // -1 = nenhum canal selecionado ainda
 
+unsigned long ultimaLeituraNTC = 0;
+float ultimoValorNTC[3] = {0.0, 0.0, 0.0};
+bool primeiraLeituraNTC = true;
+
 unsigned long ultimaLeituraTermopar = 0;
 float ultimoValorTermopar = NAN;
 
@@ -93,7 +97,10 @@ void selecionarCanal(int canal) {
     ads.setPGA(PGA_64);         // Ganho alto (64x) para o sinal baixo da celula
     ads.setMUX(DIFF_6_7);       // Diferencial entre AIN6 e AIN7
   } else {
-    ads.setPGA(PGA_1);          // Ganho 1x para ler de 0V ate 5V
+    // So reconfigura o PGA se o canal anterior nao era um NTC
+    if (canalAtual == CANAL_CELULA || canalAtual == -1) {
+      ads.setPGA(PGA_1);        // Ganho 1x para ler de 0V ate 5V
+    }
     ads.setMUX(muxNTC[canal]);  // Single-ended (AINx contra AINCOM)
   }
 
@@ -157,8 +164,19 @@ float readThermocouple() {
 void readAllSensors(DadosSensores &dados) {
   dados.tempoMs     = millis();
   dados.celulaCarga = readLoadCell();
-  dados.ntc1        = readNTC(0);
-  dados.ntc2        = readNTC(1);
-  dados.ntc3        = readNTC(2);
-  dados.termopar    = readThermocouple();
+
+  // Atualiza os NTCs a cada 250ms (mesma logica do termopar) para nao chavear o MUX
+  // do ADS1256 a cada amostra e manter a alta taxa de amostragem no canal de empuxo
+  if (primeiraLeituraNTC || (millis() - ultimaLeituraNTC >= 250)) {
+    ultimaLeituraNTC   = millis();
+    primeiraLeituraNTC = false;
+    ultimoValorNTC[0]  = readNTC(0);
+    ultimoValorNTC[1]  = readNTC(1);
+    ultimoValorNTC[2]  = readNTC(2);
+  }
+
+  dados.ntc1     = ultimoValorNTC[0];
+  dados.ntc2     = ultimoValorNTC[1];
+  dados.ntc3     = ultimoValorNTC[2];
+  dados.termopar = readThermocouple();
 }

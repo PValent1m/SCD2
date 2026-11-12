@@ -9,6 +9,7 @@ extern String pathSave;
 
 void initStorage();
 String startNewSession();
+void stopSession();
 void saveData(DadosSensores &dados);
 void runCalibrationRoutine();
 void saveSampleRate(int indice);
