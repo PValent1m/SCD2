@@ -1,3 +1,4 @@
+/*
 #include <Arduino.h>
 #include "config.h"
 #include "sensors.h"
@@ -138,6 +139,16 @@ void loop() {
         startCollection();
       }
       else if (selectedMenu == 2) {
+        trans = true;
+        startWebServer();
+      }
+    }
+    /*
+    if (checkButtonClick()) {
+      if (selectedMenu == 1) {
+        startCollection();
+      }
+      else if (selectedMenu == 2) {
         calibrando = true;
       }
       else if (selectedMenu == 3) {
@@ -149,6 +160,112 @@ void loop() {
         ajustandoTaxa = true;
         taxaEscolhida = getSampleRateIndex();
         showRateScreen(getSPSValue(taxaEscolhida));
+      }
+    } 
+    */
+    /*
+  }
+}
+*/
+
+#include <Arduino.h>
+#include "config.h"
+#include "sensors.h"
+#include "hmi.h"
+#include "storage.h"
+#include "web_server.h"
+
+// Flags de controle de modo restritas as 2 funcoes principais
+bool coleta = false;
+bool trans = false;
+
+void startCollection() {
+  if (!coleta) {
+    String caminho = startNewSession();
+    if (caminho == "") {
+      Serial.println("Coleta ABORTADA: falha no cartao SD.");
+      showSDErrorScreen();
+      delay(2000);
+      printMenu();
+      return;
+    }
+
+    coleta = true;
+    Serial.println("Coleta INICIADA.");
+    showCollectionScreen(caminho);
+  }
+}
+
+void stopCollection() {
+  if (coleta) {
+    coleta = false;
+    stopSession();
+    Serial.println("Coleta PARADA.");
+    printMenu();
+  }
+}
+
+void handleCollectionMode() {
+  DadosSensores dados;
+  readAllSensors(dados);
+  saveData(dados);
+  updateCollectionScreen(dados.celulaCarga);
+
+  // Sai da coleta ao clicar no botao do encoder mais uma vez
+  if (checkButtonClick()) {
+    stopCollection();
+  }
+}
+
+void handleTransmissionMode() {
+  // Apenas aguarda o clique do botao para desligar o Wi-Fi e sair do modo
+  if (checkButtonClick()) {
+    Serial.println("Botao pressionado, saindo do modo de transmissao.");
+    trans = false;
+    stopWebServer();
+    printMenu();
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  // Cria o Mutex que protege o acesso ao SD Card
+  sdMutex = xSemaphoreCreateMutex();
+
+  initHMI();
+  initSensors();
+  initStorage();
+  initWebServer();
+
+  // Aplica a taxa de amostragem que estava salva na memoria
+  setSampleRate(loadSampleRate());
+
+  Serial.println("SCD II inicializado com sucesso.");
+  printMenu();
+}
+
+void loop() {
+  if (trans == true) {
+    // ESTADO 1: Transmissao Ativa
+    handleTransmissionMode();
+    delay(10);
+  }
+  else if (coleta == true) {
+    // ESTADO 2: Coleta Ativa
+    handleCollectionMode();
+  }
+  else {
+    // ESTADO 3: Menu Principal (Apenas Coleta e Transmissao)
+    updateMenuNavigation();
+
+    if (checkButtonClick()) {
+      if (selectedMenu == 1) {
+        startCollection();
+      }
+      else if (selectedMenu == 2) {
+        trans = true;
+        startWebServer();
       }
     }
   }

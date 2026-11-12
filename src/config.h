@@ -17,14 +17,14 @@
 #define PIN_ADS_DRDY  34
 
 // --- Pinos do Rotary Encoder ---
-#define PIN_ENC_CLK   4
+#define PIN_ENC_CLK   32
 #define PIN_ENC_DT    35
 #define PIN_ENC_SW    15
 
 // --- Pinos do LCD I2C ---
 #define PIN_LCD_SDA   21
 #define PIN_LCD_SCL   22
-#define LCD_ADDR      0x3F   // ou 0x27 dependendo do modulo I2C
+#define LCD_ADDR      0x27   // ou 0x27 dependendo do modulo I2C
 
 // --- Constantes de Calibracao e Sensores ---
 #define TEMPO_CALIBRACAO  10000  // 10 segundos em milissegundos
