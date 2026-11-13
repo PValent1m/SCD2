@@ -224,11 +224,7 @@ void webServerTask(void *pvParameters) {
         if (filesystem->exists(path)) {
           Serial.println("Enviando arquivo para download: " + path +
                          " com o nome: " + fileName);
-          AsyncWebServerResponse *response = request->beginResponse(
-              *filesystem, path, "application/octet-stream");
-          response->addHeader("Content-Disposition",
-                              "attachment; filename=" + fileName);
-          request->send(response);
+          request->send(*filesystem, path, "application/octet-stream", true);
         } else {
           Serial.println("Arquivo nao encontrado: " + path);
           request->send(404, "text/plain", "Arquivo nao encontrado.");

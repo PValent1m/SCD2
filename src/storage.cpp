@@ -9,7 +9,6 @@ SemaphoreHandle_t sdMutex;
 Preferences preferences;
 String pathSave;
 File sessionFile;
-unsigned long ultimoFlushSD = 0;
 bool sdMontado = false;
 
 void initStorage() {
@@ -69,7 +68,6 @@ String startNewSession() {
 
   preferences.putInt("cont", proximoContador);
   pathSave = novoCaminho;
-  ultimoFlushSD = millis();
   xSemaphoreGive(sdMutex);
 
   Serial.println("Salvando em: " + pathSave);
@@ -78,7 +76,7 @@ String startNewSession() {
 
 // Fecha o arquivo de coleta ao encerrar a sessao, garantindo a gravacao da tabela FAT
 void stopSession() {
-  if (xSemaphoreTake(sdMutex, (TickType_t)100) == pdTRUE) {
+  if (xSemaphoreTake(sdMutex, portMAX_DELAY) == pdTRUE) {
     if (sessionFile) {
       sessionFile.flush();
       sessionFile.close();
@@ -97,25 +95,17 @@ int loadSampleRate() {
   return preferences.getInt("taxa", TAXA_PADRAO);
 }
 
-// Grava todos os sensores do SCD 2 no arquivo ja aberto (com flush periodico no SD)
+// Grava todos os sensores do SCD 2 no arquivo ja aberto (flush e fechamento feitos em stopSession)
 void saveData(DadosSensores &dados) {
   if (xSemaphoreTake(sdMutex, (TickType_t)10) == pdTRUE) {
     if (sessionFile) {
-      char dataBuffer[100];
-      snprintf(dataBuffer, sizeof(dataBuffer), "%lu %ld %.2f %.2f %.2f %.2f",
+      char dataBuffer[64];
+      snprintf(dataBuffer, sizeof(dataBuffer), "%lu %ld %.2f %.2f",
                dados.tempoMs,
                dados.celulaCarga,
                dados.ntc1,
-               dados.ntc2,
-               dados.ntc3,
                dados.termopar);
       sessionFile.println(dataBuffer);
-
-      // Faz flush periodico a cada 500ms para proteger os dados sem travar cada amostra
-      if (millis() - ultimoFlushSD >= 500) {
-        ultimoFlushSD = millis();
-        sessionFile.flush();
-      }
     } else {
       Serial.println("Falha: arquivo de sessao nao esta aberto!");
     }

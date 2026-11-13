@@ -8,17 +8,17 @@
 ADS1256 ads(PIN_ADS_DRDY, ADS1256::PIN_UNUSED, ADS1256::PIN_UNUSED, PIN_ADS_CS, ADS_VREF);
 
 // Tabela das taxas de amostragem disponiveis (mesma ordem dos indices do config.h)
-const int valoresSPS[NUM_TAXAS] = {100, 500, 1000, 2000, 7500};
-const byte codigosDRATE[NUM_TAXAS] = {DRATE_100SPS, DRATE_500SPS, DRATE_1000SPS, DRATE_2000SPS, DRATE_7500SPS};
+const int valoresSPS[NUM_TAXAS] = {2000, 3750, 7500, 15000, 30000};
+const byte codigosDRATE[NUM_TAXAS] = {DRATE_2000SPS, DRATE_3750SPS, DRATE_7500SPS, DRATE_15000SPS, DRATE_30000SPS};
 int taxaAtual = TAXA_PADRAO;
 
 // Entradas do ADS1256
 #define CANAL_CELULA  6                               // Par diferencial AIN6-AIN7
-const byte muxNTC[3] = {SING_0, SING_1, SING_2};      // NTC 1, 2 e 3 (AIN0, AIN1, AIN2)
+#define CANAL_NTC1    0                               // NTC 1 (AIN0)
 int canalAtual = -1;                                  // -1 = nenhum canal selecionado ainda
 
 unsigned long ultimaLeituraNTC = 0;
-float ultimoValorNTC[3] = {0.0, 0.0, 0.0};
+float ultimoValorNTC = 0.0;
 bool primeiraLeituraNTC = true;
 
 unsigned long ultimaLeituraTermopar = 0;
@@ -97,11 +97,11 @@ void selecionarCanal(int canal) {
     ads.setPGA(PGA_64);         // Ganho alto (64x) para o sinal baixo da celula
     ads.setMUX(DIFF_6_7);       // Diferencial entre AIN6 e AIN7
   } else {
-    // So reconfigura o PGA se o canal anterior nao era um NTC
+    // So reconfigura o PGA se o canal anterior nao era o NTC
     if (canalAtual == CANAL_CELULA || canalAtual == -1) {
       ads.setPGA(PGA_1);        // Ganho 1x para ler de 0V ate 5V
     }
-    ads.setMUX(muxNTC[canal]);  // Single-ended (AINx contra AINCOM)
+    ads.setMUX(SING_0);         // Single-ended (AIN0 contra AINCOM)
   }
 
   // A primeira leitura depois da troca ainda pode ter o valor do canal anterior: descarta
@@ -115,13 +115,13 @@ long readLoadCell() {
   return ads.readSingle();  // Valor bruto de 24 bits (mesma ideia do ReadCount do SCD 1)
 }
 
-// Leitura single-ended dos NTCs nos canais AIN0 (0), AIN1 (1) e AIN2 (2)
+// Leitura single-ended do NTC 1 no canal AIN0 (0)
 float readNTC(int channel) {
-  if (channel < 0 || channel > 2) {
+  if (channel != 0) {
     return 0.0;
   }
 
-  selecionarCanal(channel);
+  selecionarCanal(CANAL_NTC1);
   long bruto = ads.readSingle();
   float tensao = ads.convertToVoltage(bruto);
 
@@ -165,18 +165,14 @@ void readAllSensors(DadosSensores &dados) {
   dados.tempoMs     = millis();
   dados.celulaCarga = readLoadCell();
 
-  // Atualiza os NTCs a cada 250ms (mesma logica do termopar) para nao chavear o MUX
+  // Atualiza o NTC 1 (AIN0) a cada 250ms (mesma logica do termopar) para nao chavear o MUX
   // do ADS1256 a cada amostra e manter a alta taxa de amostragem no canal de empuxo
   if (primeiraLeituraNTC || (millis() - ultimaLeituraNTC >= 250)) {
     ultimaLeituraNTC   = millis();
     primeiraLeituraNTC = false;
-    ultimoValorNTC[0]  = readNTC(0);
-    ultimoValorNTC[1]  = readNTC(1);
-    ultimoValorNTC[2]  = readNTC(2);
+    ultimoValorNTC     = readNTC(0);
   }
 
-  dados.ntc1     = ultimoValorNTC[0];
-  dados.ntc2     = ultimoValorNTC[1];
-  dados.ntc3     = ultimoValorNTC[2];
+  dados.ntc1     = ultimoValorNTC;
   dados.termopar = readThermocouple();
 }

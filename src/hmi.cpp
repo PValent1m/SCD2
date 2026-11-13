@@ -1,15 +1,48 @@
 #include "hmi.h"
 #include <LiquidCrystal_I2C.h>
+#include <Ticker.h>
 #include <Wire.h>
 
 LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
+Ticker buttonTicker;
 
 int selectedMenu = 1; 
 int lastClkState = HIGH;
-int buttonState = HIGH;       
-int lastButtonReading = HIGH; 
-unsigned long lastDebounceTime = 0;
 unsigned long fz_lcd = 0;
+
+// Filtro digital de 5ms com histerese (integrador 0..8) exclusivo do Timer
+volatile bool eventoCliquePendente = false;
+uint8_t contadorFiltroBotao = 0;
+bool botaoEstavelPressionado = false;
+unsigned long ultimoCliqueValidoMs = 0;
+
+void amostragemBotao5ms() {
+  int leitura = digitalRead(PIN_ENC_SW);
+
+  if (leitura == LOW) {
+    if (contadorFiltroBotao < 8) {
+      contadorFiltroBotao++;
+    }
+  } else {
+    if (contadorFiltroBotao > 0) {
+      contadorFiltroBotao--;
+    }
+  }
+
+  // Atingiu 8 amostras liquidas em LOW (~40ms): confirma pressao
+  if (contadorFiltroBotao == 8 && !botaoEstavelPressionado) {
+    botaoEstavelPressionado = true;
+    unsigned long agora = millis();
+    if (agora - ultimoCliqueValidoMs >= 300) {
+      eventoCliquePendente = true;
+      ultimoCliqueValidoMs = agora;
+    }
+  }
+  // Retornou a 0 amostras (totalmente solto em HIGH por ~40ms): rearma para o proximo clique
+  else if (contadorFiltroBotao == 0 && botaoEstavelPressionado) {
+    botaoEstavelPressionado = false;
+  }
+}
 
 void initHMI() {
   pinMode(PIN_ENC_CLK, INPUT_PULLUP);
@@ -17,8 +50,12 @@ void initHMI() {
   pinMode(PIN_ENC_SW, INPUT_PULLUP); 
 
   lastClkState = digitalRead(PIN_ENC_CLK);
-  buttonState = digitalRead(PIN_ENC_SW);
-  lastButtonReading = buttonState;
+  botaoEstavelPressionado = (digitalRead(PIN_ENC_SW) == LOW);
+  contadorFiltroBotao = botaoEstavelPressionado ? 8 : 0;
+  eventoCliquePendente = false;
+
+  // Inicia amostragem periodica do botao a cada 5ms em background
+  buttonTicker.attach_ms(5, amostragemBotao5ms);
 
   Wire.begin(PIN_LCD_SDA, PIN_LCD_SCL);
   delay(250); // Tempo para o I2C do display estabilizar
@@ -72,23 +109,11 @@ void updateMenuNavigation() {
 }
 
 bool checkButtonClick() {
-  int reading = digitalRead(PIN_ENC_SW);
-  bool clicou = false;
-
-  if (reading != lastButtonReading) {
-    lastDebounceTime = millis();
+  if (eventoCliquePendente) {
+    eventoCliquePendente = false;
+    return true;
   }
-  lastButtonReading = reading;
-
-  if ((millis() - lastDebounceTime) > 50) {
-    if (reading != buttonState) {
-      buttonState = reading;
-      if (buttonState == LOW) {
-        clicou = true;
-      }
-    }
-  }
-  return clicou;
+  return false;
 }
 
 // --- Telas de Operacao ---
@@ -104,19 +129,13 @@ void showCollectionScreen(String pathSave) {
   lcd.print("REC:");
   lcd.print(txt); 
   
-  // Imprime o [VOLTAR] no canto direito da segunda linha
+  // Tela estatica durante a coleta para nao travar o barramento I2C
   lcd.setCursor(0, 1);
-  lcd.print("E:      [VOLTAR]");
+  lcd.print("Aperte p/ VOLTAR");
 }
 
 void updateCollectionScreen(long empuxo) {
-  if (millis() - fz_lcd > 500) {
-    fz_lcd = millis();
-    lcd.setCursor(2, 1);
-    lcd.print("      "); // Apaga o empuxo anterior (6 espacos max)
-    lcd.setCursor(2, 1);
-    lcd.print(empuxo);   // Escreve o novo empuxo sem apagar o [VOLTAR]
-  }
+  // Desativado durante a coleta para evitar bloqueio do I2C (~20ms) e perda de amostras
 }
 
 void showSDErrorScreen() {

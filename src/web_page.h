@@ -142,11 +142,11 @@ const char index_html[] PROGMEM = R"rawliteral(
   <br>
   <div class="content_selct custom-select">
     <select id="sel_sps" class="button_selct" style="width: auto; margin-right: auto;">
-      <option value="100">100 SPS</option>
-      <option value="500">500 SPS</option>
-      <option value="1000">1000 SPS</option>
       <option value="2000">2000 SPS</option>
+      <option value="3750">3750 SPS</option>
       <option value="7500">7500 SPS</option>
+      <option value="15000">15000 SPS</option>
+      <option value="30000">30000 SPS</option>
     </select>
     <button id="b_sd" class="button_selct button_selcted ">SD</button>
     <button id="b_LittleFS" class="button_selct" disabled>LittleFS</button>

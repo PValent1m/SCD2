@@ -209,7 +209,6 @@ void handleCollectionMode() {
   DadosSensores dados;
   readAllSensors(dados);
   saveData(dados);
-  updateCollectionScreen(dados.celulaCarga);
 
   // Sai da coleta ao clicar no botao do encoder mais uma vez
   if (checkButtonClick()) {
